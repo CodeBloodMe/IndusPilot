@@ -45,6 +45,9 @@ def calculate_net_procurement_requirement(
         "safety_stock": float(round_qty(safety)),
         "effective_inventory": float(round_qty(effective_inventory)),
         "net_shortage": float(round_qty(net_procurement_needed)),
+        "mrp_net_shortage": float(round_qty(net_procurement_needed)),
+        "unbuffered_shortage": float(round_qty(max(Decimal("0.0"), gross - effective_inventory))),
+        "safety_stock_buffer": float(round_qty(safety)),
         "has_shortage": has_shortage,
         "is_fully_covered": is_fully_covered,
         "status_message": (

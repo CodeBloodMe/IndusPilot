@@ -125,8 +125,8 @@ def generate_customer_quotation_pdf(
 
     # Profitability & Internal Cost Safeguard (Watermarked / Audited)
     profit_note = (
-        f"Internal Engineering Audit: Unit Cost ₹{unit_cost:.2f} | "
-        f"Unit Price ₹{unit_selling_price:.2f} | Projected Gross Margin: {margin_pct:.1f}% "
+        f"Internal Engineering Audit: Unit Cost Rs. {unit_cost:.2f} | "
+        f"Unit Price Rs. {unit_selling_price:.2f} | Projected Gross Margin: {margin_pct:.1f}% "
         f"(Audited by IndusPilot Cost Intelligence Engine)"
     )
     story.append(Paragraph(f"<i>{profit_note}</i>", styles['Italic']))

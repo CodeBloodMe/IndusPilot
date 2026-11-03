@@ -9,7 +9,12 @@ from app.models.entities import (
     Material, Inventory, InventoryMovement, Product,
     BillOfMaterials, BOMItem, SupplierQuotation, QuotationItem,
     PurchaseRequisition, NegotiationSession, NegotiationMessage,
-    CustomerQuotation, ApprovalRequest, UploadedDocument
+    CustomerQuotation, ApprovalRequest, UploadedDocument,
+    SupplierComparisonRequest, SupplierComparisonResult, SupplierComparisonCandidate,
+    ProductionJob, ProductionJobMaterialRequirement, StockReservation,
+    ProductionCostEstimate, CostingScenario,
+    ProcurementPlan, ProcurementPlanItem, ProcurementPlanAllocation,
+    CopilotConversation, CopilotMessage, PendingAgentAction, AgentRun, AgentRunStep, AgentToolCall
 )
 
 def seed_induspilot_demonstration_data(db: Session, force_reset: bool = False) -> dict:
@@ -24,26 +29,102 @@ def seed_induspilot_demonstration_data(db: Session, force_reset: bool = False) -
         return {"status": "ALREADY_SEEDED", "organization_id": existing_org.id}
 
     if existing_org and force_reset:
-        # Clear existing demo entities in reverse dependency order
-        db.query(ApprovalRequest).delete()
-        db.query(NegotiationMessage).delete()
-        db.query(NegotiationSession).delete()
-        db.query(CustomerQuotation).delete()
-        db.query(PurchaseRequisition).delete()
-        db.query(QuotationItem).delete()
-        db.query(SupplierQuotation).delete()
-        db.query(UploadedDocument).delete()
-        db.query(BOMItem).delete()
-        db.query(BillOfMaterials).delete()
-        db.query(InventoryMovement).delete()
-        db.query(Inventory).delete()
-        db.query(SupplierMaterial).delete()
-        db.query(Product).delete()
-        db.query(Material).delete()
-        db.query(Supplier).delete()
-        db.query(User).delete()
-        db.query(Factory).delete()
-        db.query(Organization).delete()
+        demo_org_id = existing_org.id
+        # Clear existing demo entities in reverse dependency order, strictly scoped to demo tenant
+
+        # 1. Copilot entities
+        demo_conv_ids = [c.id for c in db.query(CopilotConversation.id).filter_by(organization_id=demo_org_id).all()]
+        if demo_conv_ids:
+            demo_run_ids = [r.id for r in db.query(AgentRun.id).filter(
+                (AgentRun.organization_id == demo_org_id) | (AgentRun.conversation_id.in_(demo_conv_ids))
+            ).all()]
+        else:
+            demo_run_ids = [r.id for r in db.query(AgentRun.id).filter_by(organization_id=demo_org_id).all()]
+
+        if demo_run_ids:
+            db.query(AgentToolCall).filter(
+                (AgentToolCall.organization_id == demo_org_id) | (AgentToolCall.run_id.in_(demo_run_ids))
+            ).delete(synchronize_session=False)
+            db.query(AgentRunStep).filter(AgentRunStep.run_id.in_(demo_run_ids)).delete(synchronize_session=False)
+            db.query(PendingAgentAction).filter(
+                (PendingAgentAction.organization_id == demo_org_id) | (PendingAgentAction.run_id.in_(demo_run_ids))
+            ).delete(synchronize_session=False)
+            db.query(AgentRun).filter(AgentRun.id.in_(demo_run_ids)).delete(synchronize_session=False)
+        else:
+            db.query(AgentToolCall).filter_by(organization_id=demo_org_id).delete(synchronize_session=False)
+            db.query(PendingAgentAction).filter_by(organization_id=demo_org_id).delete(synchronize_session=False)
+
+        if demo_conv_ids:
+            db.query(CopilotMessage).filter(CopilotMessage.conversation_id.in_(demo_conv_ids)).delete(synchronize_session=False)
+            db.query(CopilotConversation).filter(CopilotConversation.id.in_(demo_conv_ids)).delete(synchronize_session=False)
+
+        # 2. Procurement plans and allocations
+        demo_plan_ids = [p.id for p in db.query(ProcurementPlan.id).filter_by(organization_id=demo_org_id).all()]
+        if demo_plan_ids:
+            db.query(ProcurementPlanAllocation).filter(ProcurementPlanAllocation.procurement_plan_id.in_(demo_plan_ids)).delete(synchronize_session=False)
+            db.query(ProcurementPlanItem).filter(ProcurementPlanItem.procurement_plan_id.in_(demo_plan_ids)).delete(synchronize_session=False)
+            db.query(ProcurementPlan).filter(ProcurementPlan.id.in_(demo_plan_ids)).delete(synchronize_session=False)
+
+        # 3. Costing & Scenarios
+        db.query(CostingScenario).filter_by(organization_id=demo_org_id).delete(synchronize_session=False)
+        db.query(ProductionCostEstimate).filter_by(organization_id=demo_org_id).delete(synchronize_session=False)
+
+        # 4. Production jobs & Stock reservations
+        demo_job_ids = [j.id for j in db.query(ProductionJob.id).filter_by(organization_id=demo_org_id).all()]
+        if demo_job_ids:
+            db.query(ProductionJobMaterialRequirement).filter(ProductionJobMaterialRequirement.production_job_id.in_(demo_job_ids)).delete(synchronize_session=False)
+            db.query(StockReservation).filter(StockReservation.production_job_id.in_(demo_job_ids)).delete(synchronize_session=False)
+            db.query(ProductionJob).filter(ProductionJob.id.in_(demo_job_ids)).delete(synchronize_session=False)
+        db.query(StockReservation).filter_by(organization_id=demo_org_id).delete(synchronize_session=False)
+
+        # 5. Supplier comparisons
+        demo_comp_res_ids = [r.id for r in db.query(SupplierComparisonResult.id).filter_by(organization_id=demo_org_id).all()]
+        if demo_comp_res_ids:
+            db.query(SupplierComparisonCandidate).filter(SupplierComparisonCandidate.comparison_result_id.in_(demo_comp_res_ids)).delete(synchronize_session=False)
+            db.query(SupplierComparisonResult).filter(SupplierComparisonResult.id.in_(demo_comp_res_ids)).delete(synchronize_session=False)
+        db.query(SupplierComparisonRequest).filter_by(organization_id=demo_org_id).delete(synchronize_session=False)
+
+        # 6. Approvals, Negotiations, Quotes, Requisitions
+        db.query(ApprovalRequest).filter_by(organization_id=demo_org_id).delete(synchronize_session=False)
+
+        demo_neg_ids = [n.id for n in db.query(NegotiationSession.id).filter_by(organization_id=demo_org_id).all()]
+        if demo_neg_ids:
+            db.query(NegotiationMessage).filter(NegotiationMessage.session_id.in_(demo_neg_ids)).delete(synchronize_session=False)
+            db.query(NegotiationSession).filter(NegotiationSession.id.in_(demo_neg_ids)).delete(synchronize_session=False)
+
+        db.query(CustomerQuotation).filter_by(organization_id=demo_org_id).delete(synchronize_session=False)
+        db.query(PurchaseRequisition).filter_by(organization_id=demo_org_id).delete(synchronize_session=False)
+
+        # 7. Supplier Quotations & Items
+        demo_quote_ids = [q.id for q in db.query(SupplierQuotation.id).filter_by(organization_id=demo_org_id).all()]
+        if demo_quote_ids:
+            db.query(QuotationItem).filter(QuotationItem.quotation_id.in_(demo_quote_ids)).delete(synchronize_session=False)
+            db.query(SupplierQuotation).filter(SupplierQuotation.id.in_(demo_quote_ids)).delete(synchronize_session=False)
+
+        db.query(UploadedDocument).filter_by(organization_id=demo_org_id).delete(synchronize_session=False)
+
+        # 8. BOM & BOM Items
+        demo_bom_ids = [b.id for b in db.query(BillOfMaterials.id).filter_by(organization_id=demo_org_id).all()]
+        if demo_bom_ids:
+            db.query(BOMItem).filter(BOMItem.bom_id.in_(demo_bom_ids)).delete(synchronize_session=False)
+            db.query(BillOfMaterials).filter(BillOfMaterials.id.in_(demo_bom_ids)).delete(synchronize_session=False)
+
+        # 9. Inventory & Movements
+        db.query(InventoryMovement).filter_by(organization_id=demo_org_id).delete(synchronize_session=False)
+        db.query(Inventory).filter_by(organization_id=demo_org_id).delete(synchronize_session=False)
+
+        # 10. Supplier Materials, Suppliers, Products, Materials
+        demo_sup_ids = [s.id for s in db.query(Supplier.id).filter_by(organization_id=demo_org_id).all()]
+        if demo_sup_ids:
+            db.query(SupplierMaterial).filter(SupplierMaterial.supplier_id.in_(demo_sup_ids)).delete(synchronize_session=False)
+        db.query(Supplier).filter_by(organization_id=demo_org_id).delete(synchronize_session=False)
+        db.query(Product).filter_by(organization_id=demo_org_id).delete(synchronize_session=False)
+        db.query(Material).filter_by(organization_id=demo_org_id).delete(synchronize_session=False)
+
+        # 11. Users, Factory, Organization
+        db.query(User).filter_by(organization_id=demo_org_id).delete(synchronize_session=False)
+        db.query(Factory).filter_by(organization_id=demo_org_id).delete(synchronize_session=False)
+        db.query(Organization).filter_by(id=demo_org_id).delete(synchronize_session=False)
         db.commit()
 
     # 1. Organization & Factory
@@ -128,7 +209,7 @@ def seed_induspilot_demonstration_data(db: Session, force_reset: bool = False) -
 
     # 4. Warehouse Inventory Levels
     inventory_data = [
-        ("MAT-SS-304", 250.0, 50.0, 0.0, 50.0, 100.0, "Bay 1, Rack A-04"),
+        ("MAT-SS-304", 400.0, 50.0, 0.0, 50.0, 100.0, "Bay 1, Rack A-04"),
         ("MAT-SS-316", 120.0, 0.0, 0.0, 40.0, 80.0, "Bay 1, Rack A-06"),
         ("MAT-MS-IS2062", 1500.0, 200.0, 500.0, 300.0, 500.0, "Yard 2, Heavy Stacks"),
         ("MAT-AL-6061", 85.0, 10.0, 0.0, 25.0, 50.0, "Bay 2, Rack B-02"),
@@ -167,9 +248,9 @@ def seed_induspilot_demonstration_data(db: Session, force_reset: bool = False) -
         ("Apex Steel & Alloys Pvt Ltd", "Apex Steel & Alloys Pvt Ltd", "Suresh Hegde", "sales@apexsteelalloys.com", "+91 80 2839 8811", "Plot 42, Peenya 2nd Phase", "Bengaluru", "Karnataka", "India", "560058", "https://apexsteelalloys.com", "29AABCA8891P1ZX", "Primary Raw Materials", "Precision Stainless Steel Plates & Sheets", 30, 200.0, 150.0, 6, 4.6, 92.0, 94.0, 30, 1850000.0, 14, 0.4),
         ("Bharat Forgings & Metals", "Bharat Forgings & Metals Ltd", "Manoj Kulkarni", "quotes@bharatforgings.co.in", "+91 20 2712 4433", "Sector 7, MIDC Bhosari", "Pune", "Maharashtra", "India", "411026", "https://bharatforgings.co.in", "27AAABF1234F1Z5", "Primary Raw Materials", "Heavy Forgings & Mild Steel Structural Sections", 15, 500.0, 300.0, 12, 4.0, 78.0, 80.0, 15, 1420000.0, 9, 1.2),
         ("Deccan Precision Alloys", "Deccan Precision Alloys Pvt Ltd", "Venkatesh Rao", "commercials@deccanalloys.in", "+91 40 2377 1199", "Balanagar Industrial Area", "Hyderabad", "Telangana", "India", "500037", "https://deccanalloys.in", "36AABCD9876Q1Z2", "Primary Raw Materials", "Specialty Stainless & Nickel Alloy Cold Rolled Stock", 45, 100.0, 80.0, 4, 4.8, 96.0, 98.0, 45, 2350000.0, 18, 0.2),
-        ("Tata Steel Industrial Distribution", "Tata Steel Industrial Distribution Ltd", "Praveen Nair", "industrial@tatasteel-channel.com", "+91 22 6665 8282", "Bandra Kurla Complex", "Mumbai", "Maharashtra", "India", "400051", "https://tatasteel.com", "27AAACT2727Q1ZW", "Primary Raw Materials", "HR/CR Coils, Heavy Plates & Structural Beams", 60, 1000.0, 500.0, 10, 4.9, 98.0, 97.0, 60, 4200000.0, 22, 0.1),
-        ("Jindal Stainless Direct Sales", "Jindal Stainless Direct Sales Corp", "Anil Singhal", "inox.direct@jindalstainless.com", "+91 11 4146 2000", "Jindal Centre, Bhikaiji Cama Place", "New Delhi", "Delhi", "India", "110066", "https://jindalstainless.com", "07AAACJ2411P1ZL", "Primary Raw Materials", "Austenitic & Ferritic Stainless Steel Sheets & Strips", 45, 300.0, 200.0, 8, 4.7, 94.0, 92.0, 45, 3100000.0, 16, 0.3),
-        ("Kalyani Steels Regional Depot", "Kalyani Steels Regional Depot", "Sunil Deshmukh", "depot.pune@kalyanisteels.com", "+91 20 6621 5000", "Mundhwa Industrial Area", "Pune", "Maharashtra", "India", "411036", "https://kalyanisteels.com", "27AAACK3100M1ZF", "Primary Raw Materials", "Engineering Carbon & Alloy Steels, Round Bars", 30, 250.0, 120.0, 9, 4.3, 85.0, 88.0, 30, 980000.0, 8, 0.8),
+        ("Titan Alloy & Plate Distribution", "Titan Alloy & Plate Distribution Ltd", "Praveen Nair", "sales@titanalloydist.in", "+91 22 6665 8282", "Bandra Kurla Complex Industrial Zone", "Mumbai", "Maharashtra", "India", "400051", "https://titanalloydist.in", "27AAACT2727Q1ZW", "Primary Raw Materials", "HR/CR Coils, Heavy Plates & Structural Beams", 60, 1000.0, 500.0, 10, 4.9, 98.0, 97.0, 60, 4200000.0, 22, 0.1),
+        ("Janata Inox Direct Sales", "Janata Inox Direct Corp", "Anil Singhal", "sales@janatainoxdirect.com", "+91 11 4146 2000", "Industrial Area, Bhikaiji Cama Place", "New Delhi", "Delhi", "India", "110066", "https://janatainoxdirect.com", "07AAACJ2411P1ZL", "Primary Raw Materials", "Austenitic & Ferritic Stainless Steel Sheets & Strips", 45, 300.0, 200.0, 8, 4.7, 94.0, 92.0, 45, 3100000.0, 16, 0.3),
+        ("Konkan Special Steels Depot", "Konkan Special Steels Depot", "Sunil Deshmukh", "depot.pune@konkanspecialsteels.in", "+91 20 6621 5000", "Mundhwa Industrial Area", "Pune", "Maharashtra", "India", "411036", "https://konkanspecialsteels.in", "27AAACK3100M1ZF", "Primary Raw Materials", "Engineering Carbon & Alloy Steels, Round Bars", 30, 250.0, 120.0, 9, 4.3, 85.0, 88.0, 30, 980000.0, 8, 0.8),
         ("National Aluminium Fabricators", "National Aluminium Fabricators Pvt Ltd", "Karthik Swaminathan", "sales@nationalalum.in", "+91 80 2836 1144", "Peenya Industrial Area, Phase 1", "Bengaluru", "Karnataka", "India", "560058", "https://nationalalum.in", "29AAACN8822B1Z3", "Aluminium & Non-Ferrous", "Aircraft & Marine Grade Aluminium Plates (6061, 5052)", 30, 150.0, 60.0, 8, 4.6, 91.0, 93.0, 30, 1120000.0, 11, 0.5),
         ("Mahalaxmi Metals & Tubes", "Mahalaxmi Metals & Tubes Ltd", "Dinesh Aggarwal", "orders@mahalaxmimetals.com", "+91 120 456 7890", "Site IV Industrial Area, Sahibabad", "Ghaziabad", "Uttar Pradesh", "India", "201010", "https://mahalaxmimetals.com", "09AAACM4433K1ZG", "Primary Raw Materials", "Mild Steel Pipes, ERW Tubes & Hollow Sections", 30, 400.0, 180.0, 10, 4.2, 83.0, 85.0, 30, 890000.0, 7, 0.9),
         ("Precision Fasteners & Components Ltd", "Precision Fasteners & Components Ltd", "Kiran Patel", "sales@precisionfasteners.in", "+91 79 2583 0011", "GIDC Naroda", "Ahmedabad", "Gujarat", "India", "382330", "https://precisionfasteners.in", "24AABCS5544N1ZQ", "Fasteners & Hardware", "High-Tensile A2-70/A4-80 Stainless Fasteners & Bolts", 30, 500.0, 40.0, 5, 4.5, 90.0, 95.0, 30, 650000.0, 15, 0.4),
@@ -219,8 +300,8 @@ def seed_induspilot_demonstration_data(db: Session, force_reset: bool = False) -
     sup_apex = supplier_objects["Apex Steel & Alloys Pvt Ltd"]
     sup_bharat = supplier_objects["Bharat Forgings & Metals"]
     sup_deccan = supplier_objects["Deccan Precision Alloys"]
-    sup_tata = supplier_objects["Tata Steel Industrial Distribution"]
-    sup_jindal = supplier_objects["Jindal Stainless Direct Sales"]
+    sup_titan = supplier_objects["Titan Alloy & Plate Distribution"]
+    sup_janata = supplier_objects["Janata Inox Direct Sales"]
     sup_nat_alum = supplier_objects["National Aluminium Fabricators"]
     sup_fasteners = supplier_objects["Precision Fasteners & Components Ltd"]
     sup_gases = supplier_objects["Industrial Gases & Welding Sol."]
@@ -228,8 +309,8 @@ def seed_induspilot_demonstration_data(db: Session, force_reset: bool = False) -
     db.add(SupplierMaterial(supplier_id=sup_apex.id, material_name=material_objects["MAT-SS-304"].name, material_grade="SS304 2B", standard_unit_price=315.0, unit="kg", moq=200.0, typical_lead_time_days=6, capacity_monthly_units=15000.0))
     db.add(SupplierMaterial(supplier_id=sup_bharat.id, material_name=material_objects["MAT-SS-304"].name, material_grade="SS304 HR", standard_unit_price=298.0, unit="kg", moq=500.0, typical_lead_time_days=12, capacity_monthly_units=12000.0))
     db.add(SupplierMaterial(supplier_id=sup_deccan.id, material_name=material_objects["MAT-SS-304"].name, material_grade="SS304 CR", standard_unit_price=330.0, unit="kg", moq=100.0, typical_lead_time_days=4, capacity_monthly_units=20000.0))
-    db.add(SupplierMaterial(supplier_id=sup_jindal.id, material_name=material_objects["MAT-SS-304"].name, material_grade="SS304 2B", standard_unit_price=318.0, unit="kg", moq=300.0, typical_lead_time_days=7, capacity_monthly_units=25000.0))
-    db.add(SupplierMaterial(supplier_id=sup_tata.id, material_name=material_objects["MAT-MS-IS2062"].name, material_grade="IS 2062 Gr B", standard_unit_price=66.0, unit="kg", moq=1000.0, typical_lead_time_days=10, capacity_monthly_units=50000.0))
+    db.add(SupplierMaterial(supplier_id=sup_janata.id, material_name=material_objects["MAT-SS-304"].name, material_grade="SS304 2B", standard_unit_price=318.0, unit="kg", moq=300.0, typical_lead_time_days=7, capacity_monthly_units=25000.0))
+    db.add(SupplierMaterial(supplier_id=sup_titan.id, material_name=material_objects["MAT-MS-IS2062"].name, material_grade="IS 2062 Gr B", standard_unit_price=66.0, unit="kg", moq=1000.0, typical_lead_time_days=10, capacity_monthly_units=50000.0))
     db.add(SupplierMaterial(supplier_id=sup_nat_alum.id, material_name=material_objects["MAT-AL-6061"].name, material_grade="6061-T6", standard_unit_price=295.0, unit="kg", moq=150.0, typical_lead_time_days=8, capacity_monthly_units=8000.0))
     db.add(SupplierMaterial(supplier_id=sup_fasteners.id, material_name=material_objects["MAT-FAST-M8"].name, material_grade="A2-70", standard_unit_price=12.20, unit="nos", moq=500.0, typical_lead_time_days=5, capacity_monthly_units=50000.0))
     db.add(SupplierMaterial(supplier_id=sup_gases.id, material_name=material_objects["MAT-WELD-308L"].name, material_grade="AWS A5.9 ER308L", standard_unit_price=475.0, unit="kg", moq=50.0, typical_lead_time_days=4, capacity_monthly_units=3000.0))
@@ -239,9 +320,14 @@ def seed_induspilot_demonstration_data(db: Session, force_reset: bool = False) -
     product = Product(
         organization_id=org.id,
         code="SS304-BRK-500",
-        name="Stainless Steel Industrial Bracket (500mm)",
+        name="Stainless Steel Industrial Bracket",
         category="Heavy Mounting Brackets",
-        description="High-load cantilever support bracket for industrial electrical cabinets and pumps."
+        description="High-load cantilever support bracket for industrial electrical cabinets and pumps.",
+        manufacturing_process="CNC Laser Cutting, Press Brake & TIG Welding",
+        base_unit="units",
+        default_batch_size=500.0,
+        estimated_duration_hours=24.0,
+        is_active=True
     )
     db.add(product)
     db.flush()
@@ -249,17 +335,42 @@ def seed_induspilot_demonstration_data(db: Session, force_reset: bool = False) -
     bom = BillOfMaterials(
         organization_id=org.id,
         product_id=product.id,
-        version="v2.1",
+        name="Standard Production BOM v1.0",
+        version="v1.0",
+        revision_status="ACTIVE",
         is_active=True,
-        batch_quantity=1.0
+        batch_quantity=1.0,
+        scrap_allowance_method="ADDITIVE_SCRAP",
+        expected_yield_pct=95.0,
+        notes="Standard production BOM for 500-unit manufacturing runs."
     )
     db.add(bom)
     db.flush()
 
-    db.add(BOMItem(bom_id=bom.id, material_id=material_objects["MAT-SS-304"].id, quantity_per_unit=2.0, unit="kg", wastage_pct=5.0, process_stage="CNC Laser Cutting & Press Brake"))
-    db.add(BOMItem(bom_id=bom.id, material_id=material_objects["MAT-FAST-M8"].id, quantity_per_unit=4.0, unit="nos", wastage_pct=2.0, process_stage="Hardware Sub-Assembly"))
-    db.add(BOMItem(bom_id=bom.id, material_id=material_objects["MAT-WELD-308L"].id, quantity_per_unit=0.15, unit="kg", wastage_pct=10.0, process_stage="TIG Robotic Welding"))
-    db.add(BOMItem(bom_id=bom.id, material_id=material_objects["MAT-BOX-CORR"].id, quantity_per_unit=0.10, unit="nos", wastage_pct=1.0, process_stage="Final Packaging"))
+    db.add(BOMItem(bom_id=bom.id, material_id=material_objects["MAT-SS-304"].id, quantity_per_unit=2.0, unit="kg", wastage_pct=5.0, scrap_allowance_method="ADDITIVE_SCRAP", process_stage="CNC Laser Cutting & Press Brake"))
+    db.add(BOMItem(bom_id=bom.id, material_id=material_objects["MAT-FAST-M8"].id, quantity_per_unit=4.0, unit="nos", wastage_pct=2.0, scrap_allowance_method="ADDITIVE_SCRAP", process_stage="Hardware Sub-Assembly"))
+    db.add(BOMItem(bom_id=bom.id, material_id=material_objects["MAT-WELD-308L"].id, quantity_per_unit=0.15, unit="kg", wastage_pct=10.0, scrap_allowance_method="ADDITIVE_SCRAP", process_stage="TIG Robotic Welding"))
+    db.add(BOMItem(bom_id=bom.id, material_id=material_objects["MAT-COAT-POWDER"].id, quantity_per_unit=0.05, unit="kg", wastage_pct=5.0, scrap_allowance_method="ADDITIVE_SCRAP", process_stage="Electrostatic Powder Coating"))
+    db.flush()
+
+    # 7b. Initial Production Job for Demo Scenario (500 units)
+    demo_job = ProductionJob(
+        organization_id=org.id,
+        job_number="JOB-2026-0001",
+        customer_order_ref="ORD-BHARAT-2026-042",
+        product_id=product.id,
+        bom_id=bom.id,
+        production_quantity=500.0,
+        unit="units",
+        priority="HIGH",
+        status="PLANNED",
+        notes="Tech4Bharat 2026 Demo: 500-unit batch of Stainless Steel Industrial Brackets.",
+        planned_start_date=datetime.utcnow() + timedelta(days=5),
+        target_completion_date=datetime.utcnow() + timedelta(days=12),
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow()
+    )
+    db.add(demo_job)
     db.flush()
 
     # 8. Seed Uploaded Documents Ledger (Real demonstrator documents)
@@ -267,8 +378,15 @@ def seed_induspilot_demonstration_data(db: Session, force_reset: bool = False) -
         ("apex_steel_quotation_ss304.pdf", "PDF", 2903, sup_apex.id, "READY_FOR_REVIEW", 0.96),
         ("bharat_forgings_ss304.pdf", "PDF", 2872, sup_bharat.id, "READY_FOR_REVIEW", 0.94),
         ("deccan_precision_alloys_ss304.pdf", "PDF", 2876, sup_deccan.id, "READY_FOR_REVIEW", 0.97),
+        ("titan_alloy_ms_structural.pdf", "PDF", 2950, sup_titan.id, "READY_FOR_REVIEW", 0.95),
+        ("janata_inox_ss316_marine.pdf", "PDF", 2920, sup_janata.id, "READY_FOR_REVIEW", 0.95),
+        ("multi_item_industrial_alloys.pdf", "PDF", 3400, sup_deccan.id, "READY_FOR_REVIEW", 0.96),
+        ("incomplete_vendor_quote.pdf", "PDF", 2600, None, "QUARANTINED", 0.52),
+        ("ambiguous_spec_quotation.pdf", "PDF", 2700, sup_bharat.id, "NEEDS_CORRECTION", 0.72),
         ("national_aluminium_pricelist.xlsx", "XLSX", 5200, sup_nat_alum.id, "READY_FOR_REVIEW", 0.95),
+        ("konkan_special_steels_metals.xlsx", "XLSX", 5100, supplier_objects["Konkan Special Steels Depot"].id, "READY_FOR_REVIEW", 0.94),
         ("mahalaxmi_metals_tubes.csv", "CSV", 890, supplier_objects["Mahalaxmi Metals & Tubes"].id, "READY_FOR_REVIEW", 0.93),
+        ("deccan_copper_busbars.csv", "CSV", 820, sup_deccan.id, "READY_FOR_REVIEW", 0.95),
         ("scanned_quotation_apex_steel.png", "PNG", 18500, sup_apex.id, "READY_FOR_REVIEW", 0.91),
         ("vendor_quote_fasteners.png", "PNG", 16800, sup_fasteners.id, "READY_FOR_REVIEW", 0.92),
     ]
@@ -305,11 +423,11 @@ def seed_induspilot_demonstration_data(db: Session, force_reset: bool = False) -
         (sup_deccan.id, "deccan_precision_alloys_ss304.pdf", "DPA-IND-QUOTE-441", -1, 29, 264000.0, 47520.0, 18.0, 3000.0, False, 314520.0, "VERIFIED", [
             ("MAT-SS-304", "Stainless Steel 304 Cold Rolled Plate", "SS 304 CR Precision Tolerance", 2.0, 800.0, "kg", 330.0, 100.0, 4, 264000.0)
         ]),
-        (sup_jindal.id, None, "JSL-DIRECT-2026-902", -4, 26, 254400.0, 45792.0, 18.0, 5500.0, False, 305692.0, "VERIFIED", [
+        (sup_janata.id, None, "JAN-DIRECT-2026-902", -4, 26, 254400.0, 45792.0, 18.0, 5500.0, False, 305692.0, "VERIFIED", [
             ("MAT-SS-304", "Stainless Steel 304 2B Finish Sheet", "SS304", 2.0, 800.0, "kg", 318.0, 300.0, 7, 254400.0)
         ]),
-        (sup_tata.id, None, "TATA-IND-2026-781", -5, 25, 257600.0, 46368.0, 18.0, 4000.0, False, 307968.0, "VERIFIED", [
-            ("MAT-SS-304", "Tata Inox SS 304 Commercial Sheet", "SS304", 2.0, 800.0, "kg", 322.0, 400.0, 8, 257600.0)
+        (sup_titan.id, None, "TAP-IND-2026-781", -5, 25, 257600.0, 46368.0, 18.0, 4000.0, False, 307968.0, "VERIFIED", [
+            ("MAT-SS-304", "Titan Inox SS 304 Commercial Sheet", "SS304", 2.0, 800.0, "kg", 322.0, 400.0, 8, 257600.0)
         ]),
 
         # --- Historical Quotations for SS304 (Price trend over last 6 months) ---
@@ -333,20 +451,33 @@ def seed_induspilot_demonstration_data(db: Session, force_reset: bool = False) -
         (sup_deccan.id, None, "DPA-SS316-2026-101", -8, 22, 168000.0, 30240.0, 18.0, 3200.0, False, 201440.0, "VERIFIED", [
             ("MAT-SS-316", "Stainless Steel 316 Marine Plate 5mm", "SS316 Acid Resistant", 5.0, 400.0, "kg", 420.0, 100.0, 5, 168000.0)
         ]),
-        (sup_jindal.id, None, "JSL-SS316-2026-441", -10, 20, 172000.0, 30960.0, 18.0, 4500.0, False, 207460.0, "VERIFIED", [
-            ("MAT-SS-316", "Jindal Inox SS 316 Plate 5mm", "SS316", 5.0, 400.0, "kg", 430.0, 200.0, 7, 172000.0)
+        (sup_janata.id, "janata_inox_ss316_marine.pdf", "JAN-SS316-2026-441", -10, 20, 172000.0, 30960.0, 18.0, 4500.0, False, 207460.0, "VERIFIED", [
+            ("MAT-SS-316", "Janata Inox SS 316 Plate 5mm", "SS316 Acid Resistant", 5.0, 400.0, "kg", 430.0, 200.0, 7, 172000.0)
         ]),
 
         # --- Mild Steel IS2062 Quotations ---
-        (sup_tata.id, None, "TATA-MS-2026-551", -7, 23, 132000.0, 23760.0, 18.0, 5000.0, False, 160760.0, "VERIFIED", [
-            ("MAT-MS-IS2062", "Tata Steel Mild Steel Plate IS 2062 E250", "IS 2062 Gr B", 10.0, 2000.0, "kg", 66.0, 1000.0, 10, 132000.0)
+        (sup_titan.id, "titan_alloy_ms_structural.pdf", "TAP-MS-2026-781", -7, 23, 132000.0, 23760.0, 18.0, 5000.0, False, 160760.0, "VERIFIED", [
+            ("MAT-MS-IS2062", "Titan Alloy Mild Steel Plate IS 2062 E250", "IS 2062 Gr B", 10.0, 2000.0, "kg", 66.0, 1000.0, 10, 132000.0)
         ]),
         (supplier_objects["Mahalaxmi Metals & Tubes"].id, "mahalaxmi_metals_tubes.csv", "MMT-QTN-2026-9014", -6, 24, 217050.0, 39069.0, 18.0, 6500.0, False, 262619.0, "VERIFIED", [
             ("MAT-MS-IS2062", "Mild Steel Plate IS 2062 E250 10mm", "IS2062", 10.0, 1200.0, "kg", 66.50, 400.0, 10, 79800.0),
             ("MAT-MS-TUBE", "MS Square Hollow Section 50x50x3mm", "IS4923", 3.0, 450.0, "meter", 305.0, 100.0, 10, 137250.0)
         ]),
-        (supplier_objects["Kalyani Steels Regional Depot"].id, None, "KLY-MS-2026-309", -9, 21, 103500.0, 18630.0, 18.0, 4200.0, False, 126330.0, "VERIFIED", [
-            ("MAT-MS-IS2062", "Kalyani Mild Steel Structural Plate", "IS 2062", 8.0, 1500.0, "kg", 69.0, 500.0, 8, 103500.0)
+        (supplier_objects["Konkan Special Steels Depot"].id, "konkan_special_steels_metals.xlsx", "KSS-2026-QTN-309", -9, 21, 207500.0, 37350.0, 18.0, 5000.0, False, 249850.0, "VERIFIED", [
+            ("MAT-MS-IS2062", "Konkan Mild Steel Structural Plate IS 2062", "IS2062", 8.0, 1500.0, "kg", 69.0, 500.0, 9, 103500.0),
+            ("MAT-BR-C36000", "Free Machining Brass Rod C36000", "C36000", 25.0, 200.0, "kg", 520.0, 50.0, 9, 104000.0)
+        ]),
+
+        # --- Multi-Item Quotation ---
+        (sup_deccan.id, "multi_item_industrial_alloys.pdf", "DPA-MULTI-2026-092", -3, 27, 366500.0, 65970.0, 18.0, 7500.0, False, 439970.0, "VERIFIED", [
+            ("MAT-SS-304", "Stainless Steel 304 Sheet Plate (2mm)", "SS304 2B", 2.0, 500.0, "kg", 325.0, 50.0, 5, 162500.0),
+            ("MAT-SS-316", "Stainless Steel 316 Marine Plate (5mm)", "SS316", 5.0, 300.0, "kg", 425.0, 50.0, 5, 127500.0),
+            ("MAT-BR-C36000", "Free Machining Brass Rod C36000", "C36000", 25.0, 150.0, "kg", 510.0, 50.0, 5, 76500.0)
+        ]),
+
+        # --- Copper by CSV ---
+        (sup_deccan.id, "deccan_copper_busbars.csv", "DPA-CU-2026-092", -4, 26, 156000.0, 28080.0, 18.0, 2500.0, False, 186580.0, "VERIFIED", [
+            ("MAT-CU-C11000", "Electrolytic Tough Pitch Copper Busbar", "C11000 ETP", 5.0, 200.0, "kg", 780.0, 50.0, 4, 156000.0)
         ]),
 
         # --- Aluminium 6061 and 5052 Quotations ---
@@ -362,7 +493,7 @@ def seed_induspilot_demonstration_data(db: Session, force_reset: bool = False) -
         (sup_deccan.id, None, "DPA-CU-2026-092", -4, 26, 156000.0, 28080.0, 18.0, 2500.0, False, 186580.0, "VERIFIED", [
             ("MAT-CU-C11000", "Electrolytic Tough Pitch Copper Busbar", "C11000 ETP", 5.0, 200.0, "kg", 780.0, 50.0, 4, 156000.0)
         ]),
-        (supplier_objects["Kalyani Steels Regional Depot"].id, None, "KLY-BR-2026-414", -7, 23, 104000.0, 18720.0, 18.0, 2200.0, False, 124920.0, "VERIFIED", [
+        (supplier_objects["Konkan Special Steels Depot"].id, None, "KSS-BR-2026-414", -7, 23, 104000.0, 18720.0, 18.0, 2200.0, False, 124920.0, "VERIFIED", [
             ("MAT-BR-C36000", "Free Machining Brass Rod C36000", "C36000", 25.0, 200.0, "kg", 520.0, 50.0, 7, 104000.0)
         ]),
 
@@ -393,8 +524,11 @@ def seed_induspilot_demonstration_data(db: Session, force_reset: bool = False) -
         (sup_apex.id, "scanned_quotation_apex_steel.png", "APX-2026-QTN-8841", -1, 30, 249600.0, 44928.0, 18.0, 4200.0, False, 298728.0, "READY_FOR_REVIEW", [
             ("MAT-SS-304", "Stainless Steel Grade 304 Sheet 2mm Thk (2B Finish)", "SS304", 2.0, 800.0, "kg", 312.0, 200.0, 6, 249600.0)
         ]),
-        (sup_jindal.id, None, "JSL-DRAFT-2026-01", 0, 30, 192000.0, 34560.0, 18.0, 3800.0, False, 230360.0, "NEEDS_CORRECTION", [
+        (sup_janata.id, None, "JAN-DRAFT-2026-01", 0, 30, 192000.0, 34560.0, 18.0, 3800.0, False, 230360.0, "NEEDS_CORRECTION", [
             ("MAT-SS-304", "SS 304 Sheet 2B Finish", "SS304", 2.0, 600.0, "kg", 320.0, 300.0, 7, 192000.0)
+        ]),
+        (sup_bharat.id, "ambiguous_spec_quotation.pdf", "BFM-AMB-2026-77", -2, 14, 111000.0, 19980.0, 18.0, 3500.0, False, 134480.0, "NEEDS_CORRECTION", [
+            ("MAT-SS-304", "Commercial Steel Sheet Material", "Generic Steel", None, 600.0, "kg", 185.0, 300.0, 8, 111000.0)
         ]),
         (sup_bharat.id, None, "BFM-REV-2026-099", 0, 14, 147500.0, 26550.0, 18.0, 3500.0, False, 177550.0, "NEEDS_CORRECTION", [
             ("MAT-SS-304", "SS304 Plate Commercial", "SS304", 3.0, 500.0, "kg", 295.0, 500.0, 12, 147500.0)
@@ -403,6 +537,10 @@ def seed_induspilot_demonstration_data(db: Session, force_reset: bool = False) -
         # --- QUARANTINED Edge Case Quotations ---
         (sup_bharat.id, None, "BFM-ERR-2026-999", -1, 10, 0.0, 0.0, 18.0, 0.0, False, 0.0, "QUARANTINED", [
             ("MAT-SS-304", "Unverified Raw Material SS304", "Unknown", None, 500.0, "kg", 0.0, 100.0, 7, 0.0)
+        ]),
+        (sup_apex.id, "incomplete_vendor_quote.pdf", "EST-INCOMPLETE-01", -1, 10, 155000.0, 0.0, 18.0, 0.0, False, 155000.0, "QUARANTINED", [
+            ("MAT-SS-304", "Stainless Steel Sheet", "SS304", 2.0, 500.0, "kg", 310.0, 100.0, 7, 155000.0),
+            (None, "Laser Cutting Consumables", "Consumables", None, 10.0, "nos", 0.0, 1.0, 7, 0.0)
         ]),
         (sup_apex.id, None, "APX-DUP-2026-8821", -2, 28, 252000.0, 45360.0, 18.0, 4500.0, False, 301860.0, "QUARANTINED", [
             ("MAT-SS-304", "Duplicate Submission of APX-2026-QTN-8821", "SS304", 2.0, 800.0, "kg", 315.0, 200.0, 6, 252000.0)
@@ -565,6 +703,86 @@ def seed_induspilot_demonstration_data(db: Session, force_reset: bool = False) -
     )
     db.add(appr1)
 
+    # 14. Seed Baseline Supplier Comparison Request & Result
+    q_apex = db.query(SupplierQuotation).filter_by(quotation_number="APX-2026-QTN-8821").first()
+    q_bharat = db.query(SupplierQuotation).filter_by(quotation_number="BFM-EST-2026-094").first()
+    q_deccan = db.query(SupplierQuotation).filter_by(quotation_number="DPA-IND-QUOTE-441").first()
+
+    if q_apex and q_bharat and q_deccan:
+        comp_req = SupplierComparisonRequest(
+            organization_id=org.id,
+            material_id=material_objects["MAT-SS-304"].id,
+            material_name="Stainless Steel 304 Sheet Plate",
+            target_quantity=800.0,
+            unit="kg",
+            delivery_deadline=datetime.utcnow() + timedelta(days=14),
+            budget_limit=320000.0,
+            weights_json=None
+        )
+        db.add(comp_req)
+        db.flush()
+
+        comp_res = SupplierComparisonResult(
+            organization_id=org.id,
+            request_id=comp_req.id,
+            recommended_supplier_id=sup_apex.id,
+            recommended_quotation_id=q_apex.id,
+            lowest_cost_supplier_id=sup_bharat.id,
+            fastest_supplier_id=sup_deccan.id,
+            highest_quality_supplier_id=sup_deccan.id,
+            summary_headline="Select Apex Steel & Alloys Pvt Ltd (Composite Score: 85.8/100) — Optimal balance of landed economics and lead time.",
+            concise_recommendation="Apex Steel & Alloys Pvt Ltd is recommended as the prime supplier for 800 kg of Stainless Steel 304 Sheet Plate. It achieves an overall score of 85.8/100 with an effective landed price of ₹377.33/unit with a dependable 6-day fulfillment timeline.",
+            detailed_explanation="Apex Steel & Alloys ranks #1 based on a multi-attribute evaluation across 5 operational dimensions. Its quoted price translates to an effective landed cost of ₹377.33/unit with freight and taxes included. In historical records, Apex Steel maintains a 92% on-time fulfillment track record with a 4.6/5.0 verified quality inspection rating.",
+            evaluated_count=3,
+            eligible_count=3
+        )
+        db.add(comp_res)
+        db.flush()
+
+        # Candidates
+        db.add(SupplierComparisonCandidate(
+            comparison_result_id=comp_res.id,
+            quotation_id=q_apex.id,
+            supplier_id=sup_apex.id,
+            rank=1,
+            eligibility_status="ELIGIBLE",
+            ineligibility_reasons_json=[],
+            effective_unit_landed_cost=377.33,
+            total_landed_cost=301860.0,
+            composite_score=85.8,
+            decision_band="STRONGLY_RECOMMENDED",
+            data_completeness_pct=100.0,
+            scorecard_json={"cost_competitiveness": 95.2, "quality": 92.0, "delivery_reliability": 92.0, "delivery_time": 86.0, "payment_flexibility": 75.0}
+        ))
+        db.add(SupplierComparisonCandidate(
+            comparison_result_id=comp_res.id,
+            quotation_id=q_bharat.id,
+            supplier_id=sup_bharat.id,
+            rank=2,
+            eligibility_status="ELIGIBLE",
+            ineligibility_reasons_json=[],
+            effective_unit_landed_cost=359.14,
+            total_landed_cost=287312.0,
+            composite_score=78.4,
+            decision_band="VIABLE_ALTERNATIVE",
+            data_completeness_pct=100.0,
+            scorecard_json={"cost_competitiveness": 100.0, "quality": 80.0, "delivery_reliability": 78.0, "delivery_time": 58.0, "payment_flexibility": 60.0}
+        ))
+        db.add(SupplierComparisonCandidate(
+            comparison_result_id=comp_res.id,
+            quotation_id=q_deccan.id,
+            supplier_id=sup_deccan.id,
+            rank=3,
+            eligibility_status="ELIGIBLE",
+            ineligibility_reasons_json=[],
+            effective_unit_landed_cost=393.15,
+            total_landed_cost=314520.0,
+            composite_score=83.6,
+            decision_band="STRONGLY_RECOMMENDED",
+            data_completeness_pct=100.0,
+            scorecard_json={"cost_competitiveness": 91.3, "quality": 96.0, "delivery_reliability": 96.0, "delivery_time": 100.0, "payment_flexibility": 90.0}
+        ))
+
     db.commit()
 
     return {
@@ -578,3 +796,24 @@ def seed_induspilot_demonstration_data(db: Session, force_reset: bool = False) -
         "negotiation_session_id": neg_session.id,
         "customer_quote_id": cq.id
     }
+
+
+if __name__ == "__main__":
+    import sys
+    from app.core.config import settings
+    from app.database.session import SessionLocal
+
+    reset = "--reset" in sys.argv or "-r" in sys.argv
+    force_prod = "--force-prod-reset" in sys.argv
+
+    if reset and getattr(settings, "ENVIRONMENT", "development").lower() == "production" and not force_prod:
+        print("ERROR: Safety block active. Cannot run --reset in PRODUCTION environment without --force-prod-reset.")
+        sys.exit(1)
+
+    db_session = SessionLocal()
+    try:
+        res = seed_induspilot_demonstration_data(db_session, force_reset=reset)
+        print(f"Seed completed: {res}")
+    finally:
+        db_session.close()
+

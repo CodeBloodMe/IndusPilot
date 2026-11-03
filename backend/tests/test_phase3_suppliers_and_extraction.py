@@ -102,9 +102,9 @@ def test_supplier_search_and_filters(client):
     assert len(res_mat.json()) >= 1
 
     # Search keyword
-    res_search = client.get("/api/v1/suppliers?search=Tata")
+    res_search = client.get("/api/v1/suppliers?search=Titan")
     assert res_search.status_code == 200
-    assert any("Tata" in s["name"] for s in res_search.json())
+    assert any("Titan" in s["name"] for s in res_search.json())
 
 
 def test_material_specification_matcher(client):

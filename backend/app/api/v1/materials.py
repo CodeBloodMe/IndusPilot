@@ -195,3 +195,91 @@ def list_inventory(
             status=status
         ))
     return results
+
+
+@router.get("/{material_id}/price-history")
+def get_material_price_history(
+    material_id: str,
+    db: Session = Depends(get_db),
+    org_id: str = Depends(get_current_org_id)
+):
+    """
+    Returns empirical and historical supplier quotation price points for the selected material.
+    Clearly distinguishes verified historical quotations from active current offers and simulation tags.
+    """
+    mat = db.query(Material).filter(Material.id == material_id, Material.organization_id == org_id).first()
+    if not mat:
+        raise HTTPException(status_code=404, detail="Material not found.")
+
+    from app.models.entities import QuotationItem, SupplierQuotation, Supplier
+    from app.calculations.landed_cost import calculate_landed_cost
+
+    # Query items matching either this material_id or matching grade & category
+    items_query = db.query(QuotationItem).join(SupplierQuotation).filter(
+        SupplierQuotation.organization_id == org_id,
+        or_(
+            QuotationItem.material_id == material_id,
+            QuotationItem.grade.ilike(f"%{mat.grade}%") if mat.grade else False,
+            QuotationItem.material_name_raw.ilike(f"%{mat.name}%")
+        )
+    ).order_by(SupplierQuotation.quotation_date.asc()).all()
+
+    price_history = []
+    for it in items_query:
+        q = it.quotation
+        sup = q.supplier if q else None
+        
+        # Calculate landed economics
+        try:
+            landed = calculate_landed_cost(
+                unit_price=it.unit_price,
+                quantity=it.quantity or 100.0,
+                tax_pct=q.tax_pct if q else 18.0,
+                is_tax_inclusive=q.is_tax_inclusive if q else False,
+                freight_total=q.freight_cost if q else 0.0
+            )
+            unit_landed = landed["effective_unit_landed_cost"]
+        except Exception:
+            unit_landed = it.unit_price
+
+        # Determine price point classification
+        is_current = bool(q.valid_until and q.valid_until >= q.quotation_date)
+        if q.status == "ARCHIVED":
+            data_type = "HISTORICAL_QUOTATION"
+        elif q.status == "VERIFIED" and is_current:
+            data_type = "CURRENT_OFFER"
+        else:
+            data_type = "SIMULATED_DEMO" if getattr(sup, "is_simulated", True) else "HISTORICAL_RECORD"
+
+        price_history.append({
+            "quotation_id": q.id,
+            "quotation_number": q.quotation_number,
+            "quotation_date": q.quotation_date.isoformat() if q.quotation_date else None,
+            "valid_until": q.valid_until.isoformat() if q.valid_until else None,
+            "supplier_id": sup.id if sup else "N/A",
+            "supplier_name": sup.name if sup else "Unknown Vendor",
+            "city": sup.city if sup else "",
+            "material_name": it.material_name_raw,
+            "grade": it.grade or mat.grade,
+            "thickness_mm": it.thickness_mm,
+            "quantity": it.quantity,
+            "unit": it.unit,
+            "quoted_unit_price": it.unit_price,
+            "effective_unit_landed_cost": unit_landed,
+            "freight_cost": q.freight_cost if q else 0.0,
+            "payment_terms": sup.credit_period_days if sup else 30,
+            "status": q.status,
+            "data_type": data_type,
+            "is_simulated": getattr(sup, "is_simulated", True)
+        })
+
+    return {
+        "material_id": mat.id,
+        "material_code": mat.code,
+        "material_name": mat.name,
+        "grade": mat.grade,
+        "unit": mat.unit,
+        "standard_cost": mat.standard_cost,
+        "price_history_records_count": len(price_history),
+        "history": price_history
+    }

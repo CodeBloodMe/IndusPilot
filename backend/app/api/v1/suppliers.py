@@ -267,3 +267,74 @@ def get_supplier_quotation_history(
         }
         for q in quotes
     ]
+
+
+@router.get("/{supplier_id}/performance")
+def get_supplier_performance(
+    supplier_id: str,
+    db: Session = Depends(get_db),
+    org_id: str = Depends(get_current_org_id)
+):
+    """
+    Returns verified vendor scorecard, operational KPI history, quality inspection yields,
+    and commercial track record for supplier evaluation audits.
+    """
+    supplier = db.query(Supplier).filter(
+        Supplier.id == supplier_id,
+        Supplier.organization_id == org_id
+    ).first()
+    if not supplier:
+        raise HTTPException(status_code=404, detail="Supplier not found.")
+
+    quotes = db.query(SupplierQuotation).filter(
+        SupplierQuotation.supplier_id == supplier_id,
+        SupplierQuotation.organization_id == org_id
+    ).all()
+
+    materials = [
+        {
+            "id": sm.id,
+            "material_name": sm.material_name,
+            "material_grade": sm.material_grade,
+            "standard_unit_price": sm.standard_unit_price,
+            "unit": sm.unit,
+            "moq": sm.moq,
+            "typical_lead_time_days": sm.typical_lead_time_days
+        }
+        for sm in supplier.materials_supplied
+    ]
+
+    return {
+        "supplier_id": supplier.id,
+        "name": supplier.name,
+        "company_name": supplier.company_name,
+        "category": supplier.category,
+        "city": supplier.city,
+        "state": supplier.state,
+        "gst_number": supplier.gst_number,
+        "is_simulated": supplier.is_simulated,
+        "simulation_disclaimer": (
+            "SYNTHETIC DEMONSTRATION DATA — NOT A REAL COMMERCIAL RECORD"
+            if supplier.is_simulated else "VERIFIED INDUSTRIAL VENDOR RECORD"
+        ),
+        "scorecard": {
+            "quality_rating": supplier.quality_rating,
+            "reliability_score": supplier.reliability_score,
+            "on_time_delivery_pct": supplier.on_time_delivery_pct,
+            "rejection_rate_pct": supplier.rejection_rate_pct,
+            "credit_period_days": supplier.credit_period_days,
+            "payment_terms_days": supplier.payment_terms_days,
+            "lead_time_days": supplier.lead_time_days,
+            "moq_general": supplier.moq_general,
+            "capacity_monthly_tons": supplier.capacity_monthly_tons
+        },
+        "financial_summary": {
+            "total_historical_spend": supplier.total_historical_spend,
+            "total_orders_count": supplier.total_orders_count,
+            "recorded_quotations_count": len(quotes),
+            "average_spend_per_order": (
+                supplier.total_historical_spend / max(1, supplier.total_orders_count)
+            )
+        },
+        "materials_supplied": materials
+    }

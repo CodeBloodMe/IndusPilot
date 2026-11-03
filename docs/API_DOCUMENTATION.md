@@ -117,34 +117,196 @@ Uploads raw quotation files (PDF, XLSX, CSV, JPG, PNG). Executes PyMuPDF / regex
 
 ---
 
-### 2.4 Smart Supplier Comparison Engine
-#### `POST /api/v1/compare/evaluate`
-Calculates landed cost and explainable 5-factor scoring (Cost 35%, Quality 25%, Reliability 15%, Lead Time 15%, Payment Terms 10%).
+### 2.4 Smart Supplier Comparison & Decision Engine
+
+#### `POST /api/v1/comparisons/analyze` (aliased at `POST /api/v1/compare/evaluate`)
+Performs deterministic multi-criteria eligibility assessment, landed cost calculation, dynamic weight-renormalized 5-factor scoring, and explainable decision narrative generation.
 
 **Request Body:**
 ```json
 {
-  "quotation_ids": ["qtn_1", "qtn_2", "qtn_3"],
-  "quantity": 800.0
+  "material_id": "mat-ss304-sheet",
+  "product_id": "prod-enclosure-01",
+  "required_quantity": 800.0,
+  "required_date": "2026-11-20T00:00:00Z",
+  "target_unit_price": 310.0,
+  "delivery_location": "Peenya Industrial Area, Bengaluru",
+  "quality_standard": "IS 6911 / ASTM A240",
+  "weights": {
+    "cost": 35.0,
+    "quality": 25.0,
+    "reliability": 15.0,
+    "lead_time": 15.0,
+    "payment_terms": 10.0
+  },
+  "quotation_ids": ["qtn_1", "qtn_2"]
 }
 ```
 
 **Response (200 OK):**
 ```json
 {
-  "compared_quotations_count": 3,
+  "comparison_id": "cmp_8d92f1b0a8",
+  "organization_id": "org_tech4bharat_induspilot_demo",
   "target_quantity": 800.0,
+  "evaluated_at": "2026-11-03T12:00:00Z",
   "recommended_candidate": {
-    "supplier_name": "Apex Steel & Alloys Pvt Ltd",
-    "composite_score": 84.8,
+    "supplier_id": "sup-titan-alloy",
+    "supplier_name": "Titan Alloy & Plate Distribution Ltd",
+    "quotation_id": "qtn_titan_304",
+    "quotation_number": "TAP-2026-QTN-8821",
+    "eligibility_status": "ELIGIBLE",
+    "composite_score": 88.5,
     "decision_band": "STRONGLY_RECOMMENDED",
     "effective_unit_landed_cost": 377.33,
-    "total_landed_cost": 301860.00,
-    "rationale": "Top tier procurement choice offering superior landed economics, quality, and delivery stability."
+    "total_landed_cost": 301860.0,
+    "rationale": "Strongly recommended as primary supplier with leading composite score of 88.5/100.",
+    "cost_breakdown": {
+      "base_material_cost": 252000.0,
+      "tax_amount": 45360.0,
+      "freight_cost": 4500.0,
+      "packaging_cost": 0.0,
+      "insurance_cost": 0.0,
+      "effective_unit_cost": 377.33,
+      "tax_treatment": "TAX_EXCLUDED",
+      "currency": "INR"
+    },
+    "score_breakdown": {
+      "cost_score": 94.2,
+      "quality_score": 92.0,
+      "reliability_score": 94.0,
+      "lead_time_score": 85.0,
+      "payment_terms_score": 33.3,
+      "composite_score": 88.5,
+      "evidence_completeness_score": 1.0,
+      "is_provisional": false
+    }
+  },
+  "category_leaders": {
+    "overall_best": {...},
+    "lowest_cost": {...},
+    "fastest_delivery": {...},
+    "highest_quality": {...}
   },
   "candidates": [...]
 }
 ```
+
+#### `POST /api/v1/comparisons/eligibility`
+Performs standalone eligibility constraint checks on an individual quotation without running full multi-supplier scoring.
+
+**Request Body:**
+```json
+{
+  "quotation_id": "qtn_titan_304",
+  "required_quantity": 800.0,
+  "required_grade": "SS304",
+  "required_thickness_mm": 2.0,
+  "required_delivery_date": "2026-11-20T00:00:00Z",
+  "required_unit": "kg"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "quotation_id": "qtn_titan_304",
+  "status": "ELIGIBLE",
+  "is_eligible": true,
+  "reasons": ["Passed all technical and operational constraints."],
+  "warnings": [],
+  "details": {
+    "grade_match": true,
+    "thickness_match": true,
+    "moq_satisfied": true,
+    "deadline_satisfied": true,
+    "is_valid": true,
+    "is_quarantined": false
+  }
+}
+```
+
+#### `POST /api/v1/comparisons/landed-cost`
+Computes deterministic landed cost breakdown for given commercial terms.
+
+**Request Body:**
+```json
+{
+  "unit_price": 315.0,
+  "quantity": 800.0,
+  "tax_rate_percent": 18.0,
+  "tax_treatment": "TAX_EXCLUDED",
+  "freight_charges": 4500.0,
+  "payment_terms_days": 30
+}
+```
+
+#### `GET /api/v1/comparisons/{comparison_id}`
+Retrieves a previously computed and persisted comparison analysis result.
+
+---
+
+### 2.5 Materials Benchmark & Price History
+
+#### `GET /api/v1/materials/{material_id}/price-history`
+Returns 12-month historical price trend data, 30-day/90-day moving averages, and minimum/maximum ranges.
+
+**Response (200 OK):**
+```json
+{
+  "material_id": "mat-ss304-sheet",
+  "material_name": "Stainless Steel 304 Sheet 2mm",
+  "unit": "kg",
+  "history": [
+    { "date": "2026-08-15", "avg_price": 320.0, "low_price": 310.0, "high_price": 330.0 },
+    { "date": "2026-09-15", "avg_price": 315.0, "low_price": 305.0, "high_price": 322.0 }
+  ],
+  "current_benchmark": 315.0,
+  "moving_average_90d": 318.5
+}
+```
+
+---
+
+### 2.6 Supplier Performance Analytics
+
+#### `GET /api/v1/suppliers/{supplier_id}/performance`
+Returns comprehensive quality rating, on-time delivery percentage, rejection rate, defect history, and total fulfilled spend.
+
+---
+
+### 2.7 Procurement Requisitions Handoff
+
+#### `POST /api/v1/procurement/requisitions`
+Creates an official internal Purchase Requisition linked to an approved quotation and supplier.
+
+**Request Body:**
+```json
+{
+  "supplier_id": "sup-titan-alloy",
+  "material_id": "mat-ss304-sheet",
+  "quotation_id": "qtn_titan_304",
+  "quantity": 800.0,
+  "target_price": 315.0,
+  "notes": "Fast-track order for Batch #042 assembly",
+  "delivery_deadline": "2026-11-20"
+}
+```
+
+**Response (201 Created):**
+```json
+{
+  "id": "req-9c81a2",
+  "requisition_number": "PR-2026-0042",
+  "supplier_id": "sup-titan-alloy",
+  "quantity": 800.0,
+  "status": "PENDING_APPROVAL",
+  "created_at": "2026-11-03T12:00:00Z"
+}
+```
+
+#### `GET /api/v1/procurement/requisitions`
+Lists all active and historical procurement requisitions.
 
 ---
 
@@ -308,4 +470,127 @@ Conversational assistant supporting English, Hindi, and Hinglish with real tool 
   "query": "Apex Steel ka quotation compare karo aur batao kitna kharcha aayega 500 units ke liye"
 }
 ```
+
+---
+
+## 3. Phase 5 Manufacturing Intelligence API Endpoints
+
+### 3.1 Products Catalogue
+- `GET /api/v1/products`: List all manufactured products in the tenant.
+- `POST /api/v1/products`: Create a new manufactured product with process, base unit, and default batch size.
+- `GET /api/v1/products/{product_id}`: Retrieve detailed product metadata and associated BOM revisions.
+- `PATCH /api/v1/products/{product_id}`: Update manufacturing parameters or active status.
+
+### 3.2 Bill of Materials (BOM) & Revision Control
+- `GET /api/v1/boms`: List BOMs with optional filtering by `product_id` and `is_active`.
+- `POST /api/v1/boms`: Create an engineering BOM with items, scrap allowances (`ADDITIVE_SCRAP` or `YIELD_BASED`), and routing stages.
+- `GET /api/v1/boms/{bom_id}`: Retrieve BOM details and itemized specifications.
+- `POST /api/v1/boms/{bom_id}/revisions`: Create a new immutable revision (e.g. `v2.0`), optionally setting it as active.
+- `POST /api/v1/boms/{bom_id}/validate`: Run automated engineering checks (orphaned materials, duplicates, negative quantities, scrap > 100%).
+- `GET /api/v1/boms/compare?bom_id_1={id1}&bom_id_2={id2}`: Side-by-side diff comparing two BOM revisions (added/removed items, quantity & scrap variances).
+- `POST /api/v1/boms/explode`: Explode a BOM for a planned batch size, applying scrap models and netting against live warehouse stock.
+
+### 3.3 Perpetual Inventory Ledger & Movements
+- `GET /api/v1/inventory/ledger`: Real-time stock ledger returning physical stock, reserved stock, available stock, moving average cost, and status.
+- `POST /api/v1/inventory/receive`: Post inbound raw material stock with quantity, unit cost, and idempotency key protection.
+- `POST /api/v1/inventory/issue`: Issue stock to machines or production bays (enforces negative stock prevention).
+- `POST /api/v1/inventory/reserve`: Lock material to a production job (`StockReservation`).
+- `POST /api/v1/inventory/release`: Release a stock reservation if a job is cancelled or modified.
+- `POST /api/v1/inventory/adjust`: Physical cycle count reconciliation with recorded adjustment delta and audit notes.
+- `GET /api/v1/inventory/alerts`: List critical shortages, reorder point triggers, and overstock warnings.
+- `GET /api/v1/inventory/movements`: Immutable perpetual movement transaction history.
+- `POST /api/v1/inventory/check-availability`: Batch stock availability check for multiple materials.
+
+### 3.4 Production Jobs & MRP
+- `GET /api/v1/production/jobs`: List manufacturing jobs with filtering by status.
+- `POST /api/v1/production/jobs`: Create a production job order linked to a product and active BOM.
+- `GET /api/v1/production/jobs/{job_id}`: Retrieve job order status, timeline, and material allocations.
+- `POST /api/v1/production/jobs/{job_id}/material-check`: Execute MRP explosion, net against warehouse stock, and compute shortages.
+- `POST /api/v1/production/jobs/{job_id}/procurement-handoff`: Automatically generate purchase requisitions and handoff shortages to the procurement comparison engine.
+
+### 3.5 Deterministic 14-Factor Costing & What-If Simulations
+- `POST /api/v1/costing/estimate`: Calculate and persist a complete 14-factor manufacturing cost estimate, break-even price, and target selling price.
+- `GET /api/v1/costing/estimates`: List historical cost estimates.
+- `GET /api/v1/costing/estimates/{estimate_id}`: Retrieve detailed estimate breakdown, assumptions snapshot, and data quality status.
+- `POST /api/v1/costing/simulate`: Run What-If sensitivity simulations (material price variations, batch size economies of scale, scrap reductions, labor rate deltas) against a baseline estimate.
+- `POST /api/v1/costing/scenarios`: Save a simulation scenario snapshot for management review.
+
+---
+
+## 4. Phase 6 Advanced Procurement Optimisation API Endpoints
+
+### 4.1 Strategies & Metadata
+- `GET /api/v1/procurement/strategies`: Lists the 5 available mathematical optimization strategies (`LOWEST_LANDED_COST`, `BALANCED`, `FASTEST_DELIVERY`, `QUALITY_FIRST`, `BUDGET_CONSTRAINED`) with descriptions and weightings.
+
+### 4.2 Mathematical Procurement Planning & Optimization
+- `GET /api/v1/procurement/plans`: Lists all created procurement plans in the tenant, filterable by `job_id` and `status`.
+- `POST /api/v1/procurement/plans`: Generates and solves a multi-material procurement plan using Google OR-Tools MILP.
+  - **Payload:** `requirements` array (with `material_id`, `required_quantity`, `unit`, `max_lead_time_days`), `strategy`, optional `budget_limit`, `allow_split_purchasing`, `max_suppliers_per_material`, `min_quality_rating`, `max_overbuy_pct`.
+  - **Returns:** Plan ID, plan number, solver status, total landed cost, budget utilization, excess units, allocations breakdown, baseline comparison benchmarks, and natural language explanation.
+- `POST /api/v1/procurement/plans/from-job`: Automatically extracts raw material shortages from a production job's active BOM explosion and warehouse inventory netting, and optimizes a multi-material procurement plan in a single API call.
+- `GET /api/v1/procurement/plans/{plan_id}`: Retrieves complete plan details including requirement items, supplier quota allocations, and comparative baseline savings.
+- `POST /api/v1/procurement/plans/{plan_id}/reoptimize`: Re-executes mathematical optimization on an existing plan with updated strategy or constraint parameters.
+
+### 4.3 Governance, Managerial Approval & ERP Integration
+- `POST /api/v1/procurement/plans/{plan_id}/request-approval`: Submits an optimized plan for formal managerial authorization (`PENDING_APPROVAL`).
+- `POST /api/v1/procurement/plans/{plan_id}/approve`: Approves the plan (`APPROVED`) by an authorized managerial role (Operations Director / Plant Head) and logs audit metadata (`approved_by`, `approved_at`).
+- `POST /api/v1/procurement/plans/{plan_id}/reject`: Rejects the plan (`REJECTED`) with a required text audit rationale (`rejection_reason`).
+- `POST /api/v1/procurement/plans/{plan_id}/generate-requisitions`: Automatically converts all awarded allocations in an approved plan into formal `PurchaseRequisition` records in the procurement ledger, sets plan status to `CONVERTED_TO_PO`, and locks the plan from modification.
+
+---
+
+## 5. Phase 7 Agentic Negotiation & Customer Quotation API Endpoints
+
+### 5.1 Autonomous AI Supplier Negotiation Endpoints
+- `GET /api/v1/negotiation/opportunities/{quotation_id}`: Evaluates a verified supplier quotation against internal and market benchmarks, computing target discount, benchmark price, and potential landed savings.
+- `GET /api/v1/negotiation/sessions`: Lists active and historical negotiation sessions filterable by `status`.
+- `POST /api/v1/negotiation/sessions`: Initiates a new autonomous negotiation session linked to a quotation or supplier, setting target price, strategy, and walk-away ceiling.
+- `GET /api/v1/negotiation/sessions/{session_id}`: Retrieves complete session state, 16-state lifecycle position, commercial impact analysis, and chronological message dialogue thread.
+- `POST /api/v1/negotiation/sessions/{session_id}/generate-message`: Generates an agentic counteroffer message in English, Hindi, or Hinglish based on the chosen commercial strategy (`VOLUME_COMMITMENT`, `BENCHMARK_PARITY`, `PAYMENT_ACCELERATION`, `LONG_TERM_CONTRACT`, `SPOT_CLEARANCE`). Sets message to `is_approved=False` and session to `AWAITING_APPROVAL`.
+- `POST /api/v1/negotiation/messages/{message_id}/approve`: Human commercial gate. Approves a drafted counteroffer for transmission to the supplier, recording approver name and timestamp.
+- `POST /api/v1/negotiation/sessions/{session_id}/simulate-response`: Simulates realistic vendor concession curve behavior (`CONCESSION`, `FIRM`, `COUNTER`, `REJECT`), tagging messages as `is_simulated=True` and deterministically recalculating all 9 landed cost components.
+- `POST /api/v1/negotiation/sessions/{session_id}/analyze-response`: Parses unstructured inbound supplier replies (email/WhatsApp), extracts offered rates, classifies sentiment, and recalculates landed costs.
+- `POST /api/v1/negotiation/sessions/{session_id}/finalize-agreement`: Formally concludes agreement, transitions state to `AGREEMENT_REACHED`, and generates an immutable child quotation revision (`version=2`) without mutating the original.
+- `POST /api/v1/negotiation/start`: Backwards-compatible legacy endpoint to start a session and generate the initial counteroffer.
+- `POST /api/v1/negotiation/send-and-simulate`: Backwards-compatible legacy endpoint to simulate concession and return immediate round savings.
+
+### 5.2 Customer Quotation Engine & Margin Protection Endpoints
+- `GET /api/v1/customer-quotes`: Lists customer quotations filterable by `status` and `is_loss_making`.
+- `POST /api/v1/customer-quotes`: Formulates an audited commercial customer quote, enforces Gross Margin % vs Markup % distinction in Python `Decimal`, evaluates loss-making status, and renders an official ReportLab PDF.
+- `POST /api/v1/customer-quotes/generate`: Backwards-compatible alias for quotation generation.
+- `GET /api/v1/customer-quotes/{quote_id}`: Retrieves full customer quotation record, breakdown items, margin spread, and PDF availability.
+- `POST /api/v1/customer-quotes/{quote_id}/recalculate`: Recalculates an existing customer quote with revised prices or margin targets, increments revision version (`version=version+1`), and renders an updated PDF.
+- `POST /api/v1/customer-quotes/{quote_id}/request-approval`: Submits a quote to the commercial director review queue.
+- `POST /api/v1/customer-quotes/{quote_id}/approve`: Approves a customer quote for dispatch to the client.
+- `GET /api/v1/customer-quotes/{quote_id}/pdf` & `GET /api/v1/customer-quotes/{quote_id}/download-pdf`: Streams the official customer quotation PDF with safe `Rs.` currency formatting.
+- `POST /api/v1/customer-quotes/{quote_id}/record-response`: Records client response (`ACCEPTED`, `REJECTED`, `COUNTER_PROPOSED`) with text audit notes.
+- `GET /api/v1/customer-quotes/customers`: Lists all registered customer directory enterprises.
+- `POST /api/v1/customer-quotes/customers`: Registers a new customer entity with contact details, GSTIN, and credit terms.
+
+---
+
+## 6. Phase 8 AI Copilot & Multi-Agent Orchestration Endpoints
+
+### 6.1 Conversational Session Management
+- `GET /api/v1/copilot/conversations`: Lists persistent conversational sessions filterable by `include_archived`.
+- `POST /api/v1/copilot/conversations`: Creates a new conversational thread with initial greetings and parameter state.
+- `GET /api/v1/copilot/conversations/{conversation_id}`: Retrieves complete conversation details and chronological message history.
+- `PATCH /api/v1/copilot/conversations/{conversation_id}`: Updates session title or toggles archive state (`is_archived`).
+- `DELETE /api/v1/copilot/conversations/{conversation_id}`: Permanently deletes a conversation and cascade deletes child messages and runs.
+
+### 6.2 Message Posting & LangGraph Execution
+- `POST /api/v1/copilot/conversations/{conversation_id}/messages`: Submits a user instruction in English, Hindi, or Hinglish. Automatically executes the LangGraph multi-agent supervisor graph, updates persistent context state, persists message and telemetry traces, and returns synthesized response with structured UI card.
+- `POST /api/v1/copilot/chat`: Backwards-compatible execution endpoint that manages or resumes the active conversation.
+
+### 6.3 Agent Run Telemetry & Activity Panel
+- `GET /api/v1/copilot/runs/{run_id}`: Retrieves deep telemetry for an execution run, including selected agents, step status, tool calls, and duration (ms).
+- `GET /api/v1/copilot/runs/{run_id}/events`: Returns chronological step-by-step event stream for the live Agent Activity Panel.
+
+### 6.4 Human-in-the-Loop Governance & Action Checkpoints
+- `GET /api/v1/copilot/actions`: Lists pending or historical agent actions filterable by `status` (`PENDING`, `APPROVED`, `REJECTED`) and `conversation_id`.
+- `POST /api/v1/copilot/actions/{action_id}/approve`: Authorizes a paused commercial action (e.g. customer quote dispatch, inventory adjustment) and resumes the paused agent run.
+- `POST /api/v1/copilot/actions/{action_id}/reject`: Declines a paused commercial action with mandatory executive audit rationale.
+
+
+
 

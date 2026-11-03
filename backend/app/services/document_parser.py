@@ -10,15 +10,16 @@ from PIL import Image
 
 from app.services.quality_gate import evaluate_quotation_quality_gate
 from app.services.material_matcher import match_material_specification, extract_thickness, extract_form, resolve_grade
+from app.services.ocr_engine import extract_text_from_image, get_ocr_engine_status
 
 KNOWN_SUPPLIERS = [
     "Apex Steel & Alloys Pvt Ltd",
     "Bharat Forgings & Metals",
     "Deccan Precision Alloys",
-    "Tata Steel Industrial",
-    "Jindal Stainless",
-    "Kalyani Steels",
-    "Vardhman Special Steels",
+    "Titan Alloy & Plate Distribution Ltd",
+    "Janata Inox Direct Corp",
+    "Konkan Special Steels Depot",
+    "Vindhya Special Alloys Ltd",
     "National Aluminium Fabricators",
     "Mahalaxmi Metals & Tubes",
     "Precision Fasteners & Components Ltd"
@@ -39,6 +40,8 @@ def parse_uploaded_quotation_file(
     ext = os.path.splitext(original_filename)[1].lower()
     raw_text = ""
     tables_data: List[List[List[str]]] = []
+    ocr_meta = None
+    image_conf = None
 
     try:
         if ext == ".pdf":
@@ -47,8 +50,8 @@ def parse_uploaded_quotation_file(
             raw_text, tables_data = _extract_from_excel(file_path)
         elif ext == ".csv":
             raw_text, tables_data = _extract_from_csv(file_path)
-        elif ext in [".png", ".jpg", ".jpeg", ".tiff", ".bmp"]:
-            raw_text, tables_data = _extract_from_image(file_path)
+        elif ext in [".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".webp"]:
+            raw_text, tables_data, ocr_meta, image_conf = _extract_from_image(file_path)
         else:
             raise ValueError(f"Unsupported file format '{ext}'. Supported formats: PDF, XLSX, XLS, CSV, PNG, JPG.")
     except Exception as e:
@@ -68,6 +71,10 @@ def parse_uploaded_quotation_file(
 
     # Extract structured commercial fields from parsed text and tables
     extracted = _extract_quotation_fields(raw_text, tables_data, original_filename)
+    if image_conf is not None:
+        extracted["confidence_score"] = image_conf
+    if ocr_meta is not None:
+        extracted["ocr_metadata"] = ocr_meta
 
     # Perform automated material catalogue matching
     if catalogue_materials:
@@ -179,48 +186,12 @@ def _extract_from_csv(file_path: str):
 
 def _extract_from_image(file_path: str):
     """
-    Image parser: Inspects image metadata with PIL and performs heuristic
-    parameter extraction from filenames, industrial tags, or standard sample patterns.
+    Image parser: invokes real OCR engine (Tesseract) if available,
+    or deterministic layout & visual zone parser fallback.
+    Returns (raw_text, tables, ocr_meta, confidence)
     """
-    filename = os.path.basename(file_path)
-    text_parts = [f"Image Quotation Document: {filename}"]
-
-    try:
-        with Image.open(file_path) as img:
-            w, h = img.size
-            fmt = img.format
-            text_parts.append(f"Image Resolution: {w}x{h} ({fmt})")
-    except Exception:
-        pass
-
-    # Extract vendor and pricing hints if embedded in filename or sample naming
-    clean_name = os.path.splitext(filename)[0].replace("_", " ").replace("-", " ")
-    text_parts.append(f"Header: {clean_name}")
-
-    # Check for known vendor names in image name
-    matched_vendor = None
-    for s in KNOWN_SUPPLIERS:
-        if any(token.lower() in clean_name.lower() for token in s.split()[:2]):
-            matched_vendor = s
-            break
-
-    if matched_vendor:
-        text_parts.append(f"Supplier: {matched_vendor}")
-    else:
-        text_parts.append("Supplier: Apex Steel & Alloys Pvt Ltd")
-
-    text_parts.append("Quotation No: QTN-IMG-2026-8841")
-    text_parts.append("GSTIN: 29AABCS1429B1Z4")
-    text_parts.append("Payment Terms: 30 Days Net Credit")
-    text_parts.append("Lead Time: 10 Days")
-    text_parts.append("MOQ: 250 kg")
-    text_parts.append("Material: Stainless Steel Grade 304 Sheet 2mm Thk | Qty: 500 kg | Rate: INR 295.00/kg")
-    text_parts.append("Subtotal: 147500.00")
-    text_parts.append("GST: 18%")
-    text_parts.append("Freight Charges: Rs. 3500.00")
-    text_parts.append("Total: 177550.00")
-
-    return "\n".join(text_parts), []
+    text, confidence, ocr_meta = extract_text_from_image(file_path)
+    return text, [], ocr_meta, confidence
 
 
 def _extract_quotation_fields(raw_text: str, tables: List[Any], filename: str) -> Dict[str, Any]:

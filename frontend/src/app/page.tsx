@@ -20,8 +20,8 @@ import ScenarioView from "@/components/views/ScenarioView";
 import SettingsView from "@/components/views/SettingsView";
 import { getDashboardMetrics, getApprovals } from "@/lib/api";
 
-export default function Home() {
-  const [activeTab, setActiveTab] = useState<string>("dashboard");
+export default function Home({ initialTab = "dashboard" }: { initialTab?: string }) {
+  const [activeTab, setActiveTab] = useState<string>(initialTab);
   const [metrics, setMetrics] = useState<any>(null);
   const [pendingApprovalsCount, setPendingApprovalsCount] = useState<number>(1);
   const [loading, setLoading] = useState<boolean>(true);
@@ -41,8 +41,21 @@ export default function Home() {
   };
 
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      const path = window.location.pathname.replace(/^\//, "").split("/")[0];
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get("tab") || (path ? path : null);
+      const validTabs = [
+        "copilot", "dashboard", "bom", "inventory", "compare",
+        "optimizer", "costing", "customer-quotes", "negotiation",
+        "approvals", "quotations", "suppliers", "analytics", "scenarios", "settings"
+      ];
+      if (tabParam && validTabs.includes(tabParam)) {
+        setActiveTab(tabParam);
+      }
+    }
     refreshData();
-  }, []);
+  }, [initialTab]);
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50 text-slate-900 font-sans">
